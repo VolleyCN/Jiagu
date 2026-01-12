@@ -1,0 +1,30 @@
+channels:
+- metadata:
+    CHANNEL_ID: zhima-android-google_play
+    MARKET_NAME: Google Play
+  name: google_play
+- metadata:
+    CHANNEL_ID: zhima-android-huawei
+    MARKET_NAME: Huawei AppGallery
+  name: huawei
+- metadata:
+    CHANNEL_ID: zhima-android-xiaomi
+    MARKET_NAME: Xiaomi MIUI Store
+  name: xiaomi
+- metadata:
+    CHANNEL_ID: zhima-android-oppo
+    MARKET_NAME: OPPO App Market
+  name: oppo
+- metadata:
+    CHANNEL_ID: zhima-android-vivo
+    MARKET_NAME: vivo App Store
+  name: vivo
+- metadata:
+    CHANNEL_ID: zhima-android-yingyongbao
+    MARKET_NAME: 应用宝
+  name: 应用宝
+
+output:
+  directory: ./channels
+  overwrite: true
+version: 1.0

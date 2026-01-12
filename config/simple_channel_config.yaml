@@ -1,0 +1,17 @@
+# 渠道配置文件
+# 仅包含一个测试渠道用于验证
+
+output:
+  directory: channels
+  overwrite: true
+
+template:
+  metadata:
+    CHANNEL_ID: "zhima-android-test"
+    MARKET_NAME: "Test Market"
+
+channels:
+  - name: "test"
+    metadata:
+      CHANNEL_ID: "zhima-android-test"
+      MARKET_NAME: "Test Market"
