@@ -7,11 +7,11 @@ output:
 
 template:
   metadata:
-    CHANNEL_ID: "zhima-android-test"
+    CHANNEL_ID: "test"
     MARKET_NAME: "Test Market"
 
 channels:
   - name: "test"
     metadata:
-      CHANNEL_ID: "zhima-android-test"
+      CHANNEL_ID: "test"
       MARKET_NAME: "Test Market"
