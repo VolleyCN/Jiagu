@@ -76,9 +76,17 @@ class ResourceObfuscator:
             env = os.environ.copy()
             # 如果JAVA_HOME指向不存在的路径，取消它，让apktool使用默认值
             java_home = env.get('JAVA_HOME')
-            if java_home and not os.path.exists(java_home):
-                logger.warning(f"检测到无效的JAVA_HOME: {java_home}，已临时取消")
-                del env['JAVA_HOME']
+            if java_home:
+                # 检查JAVA_HOME是否存在
+                if not os.path.exists(java_home):
+                    logger.warning(f"检测到无效的JAVA_HOME: {java_home}，已临时取消")
+                    del env['JAVA_HOME']
+                else:
+                    # 检查是否是MacOS风格的Java目录结构（包含Contents/Home）
+                    macos_java_home = os.path.join(java_home, 'Contents', 'Home')
+                    if os.path.exists(macos_java_home):
+                        env['JAVA_HOME'] = macos_java_home
+                        logger.info(f"检测到MacOS风格的Java目录结构，自动调整JAVA_HOME为: {macos_java_home}")
             
             # 执行apktool反编译命令
             result = subprocess.run([self.apktool_path, "d", apk_path, "-o", output_dir, "-f"], 
@@ -114,9 +122,17 @@ class ResourceObfuscator:
             env = os.environ.copy()
             # 如果JAVA_HOME指向不存在的路径，取消它，让apktool使用默认值
             java_home = env.get('JAVA_HOME')
-            if java_home and not os.path.exists(java_home):
-                logger.warning(f"检测到无效的JAVA_HOME: {java_home}，已临时取消")
-                del env['JAVA_HOME']
+            if java_home:
+                # 检查JAVA_HOME是否存在
+                if not os.path.exists(java_home):
+                    logger.warning(f"检测到无效的JAVA_HOME: {java_home}，已临时取消")
+                    del env['JAVA_HOME']
+                else:
+                    # 检查是否是MacOS风格的Java目录结构（包含Contents/Home）
+                    macos_java_home = os.path.join(java_home, 'Contents', 'Home')
+                    if os.path.exists(macos_java_home):
+                        env['JAVA_HOME'] = macos_java_home
+                        logger.info(f"检测到MacOS风格的Java目录结构，自动调整JAVA_HOME为: {macos_java_home}")
             
             # 执行apktool编译命令
             result = subprocess.run([self.apktool_path, "b", decompiled_dir, "-o", output_apk], 

@@ -140,11 +140,39 @@ class ChannelPackageManager:
                 # 首先检查是否有官方walle工具可用
                 walle_jar = os.path.join(os.path.dirname(__file__), '../../lib/walle-cli-all.jar')
                 if os.path.exists(walle_jar):
+                    # 检查JAVA_HOME环境变量
+                    java_home = os.environ.get('JAVA_HOME')
+                    java_cmd = 'java'
+                    
+                    # 验证JAVA_HOME是否有效
+                    if java_home:
+                        # 检查是否是MacOS风格的Java目录结构（包含Contents/Home）
+                        macos_java_home = os.path.join(java_home, 'Contents', 'Home')
+                        if os.path.exists(macos_java_home):
+                            java_home = macos_java_home
+                            logger.info(f"检测到MacOS风格的Java目录结构，自动调整JAVA_HOME为: {macos_java_home}")
+                        
+                        java_exec = os.path.join(java_home, 'bin', 'java')
+                        if not os.path.exists(java_exec):
+                            logger.warning(f"检测到无效的JAVA_HOME: {java_home}，已临时取消使用官方walle工具")
+                            # 直接使用纯Python实现
+                            logger.info(f"使用纯Python实现生成渠道包: {channel_apk_name}")
+                            success = self.walle_impl.inject_channel(signed_apk_path, channel_apk_path, channel_id)
+                            
+                            if success:
+                                generated_packages.append(channel_apk_path)
+                                logger.info(f"渠道包生成成功: {channel_apk_path}")
+                            else:
+                                logger.error(f"渠道包生成失败: {channel_apk_path}")
+                            continue
+                        else:
+                            java_cmd = java_exec
+                    
                     # 使用官方walle工具生成渠道包
                     logger.info(f"使用官方walle工具生成渠道包: {channel_apk_name}")
                     
                     cmd = [
-                        'java', '-jar', walle_jar,
+                        java_cmd, '-jar', walle_jar,
                         'put', '-c', channel_id,
                         signed_apk_path,
                         channel_apk_path

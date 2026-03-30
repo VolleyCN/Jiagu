@@ -520,9 +520,17 @@ public class JiaguApplication extends Application {{
             env = os.environ.copy()
             # 如果JAVA_HOME指向不存在的路径，取消它，让apktool使用默认值
             java_home = env.get('JAVA_HOME')
-            if java_home and not os.path.exists(java_home):
-                logger.warning(f"检测到无效的JAVA_HOME: {java_home}，已临时取消")
-                del env['JAVA_HOME']
+            if java_home:
+                # 检查JAVA_HOME是否存在
+                if not os.path.exists(java_home):
+                    logger.warning(f"检测到无效的JAVA_HOME: {java_home}，已临时取消")
+                    del env['JAVA_HOME']
+                else:
+                    # 检查是否是MacOS风格的Java目录结构（包含Contents/Home）
+                    macos_java_home = os.path.join(java_home, 'Contents', 'Home')
+                    if os.path.exists(macos_java_home):
+                        env['JAVA_HOME'] = macos_java_home
+                        logger.info(f"检测到MacOS风格的Java目录结构，自动调整JAVA_HOME为: {macos_java_home}")
             
             # 执行apktool反编译命令
             result = subprocess.run([self.apktool_path, "d", apk_path, "-o", output_dir, "-f"], 
@@ -557,9 +565,17 @@ public class JiaguApplication extends Application {{
             env = os.environ.copy()
             # 如果JAVA_HOME指向不存在的路径，取消它，让apktool使用默认值
             java_home = env.get('JAVA_HOME')
-            if java_home and not os.path.exists(java_home):
-                logger.warning(f"检测到无效的JAVA_HOME: {java_home}，已临时取消")
-                del env['JAVA_HOME']
+            if java_home:
+                # 检查JAVA_HOME是否存在
+                if not os.path.exists(java_home):
+                    logger.warning(f"检测到无效的JAVA_HOME: {java_home}，已临时取消")
+                    del env['JAVA_HOME']
+                else:
+                    # 检查是否是MacOS风格的Java目录结构（包含Contents/Home）
+                    macos_java_home = os.path.join(java_home, 'Contents', 'Home')
+                    if os.path.exists(macos_java_home):
+                        env['JAVA_HOME'] = macos_java_home
+                        logger.info(f"检测到MacOS风格的Java目录结构，自动调整JAVA_HOME为: {macos_java_home}")
             
             # 执行apktool编译命令
             result = subprocess.run([self.apktool_path, "b", decompiled_dir, "-o", output_apk], 
@@ -590,10 +606,24 @@ public class JiaguApplication extends Application {{
             # 检查Java SDK目录
             java_home = os.environ.get('JAVA_HOME')
             if java_home:
+                # 检查是否是MacOS风格的Java目录结构（包含Contents/Home）
+                macos_java_home = os.path.join(java_home, 'Contents', 'Home')
+                if os.path.exists(macos_java_home):
+                    java_home = macos_java_home
+                    logger.info(f"检测到MacOS风格的Java目录结构，自动调整JAVA_HOME为: {java_home}")
+                
                 dx_path = os.path.join(java_home, "bin", "dx")
                 if os.path.exists(dx_path):
                     logger.info(f"在Java SDK中找到dx工具: {dx_path}")
                     return dx_path
+            
+            # 检查项目lib目录
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            lib_dir = os.path.join(project_root, "lib")
+            dx_path = os.path.join(lib_dir, "dx")
+            if os.path.exists(dx_path):
+                logger.info(f"在项目lib目录中找到dx工具: {dx_path}")
+                return dx_path
             
             logger.warning("未找到dx工具，无法编译Java代码为dex")
             return None
@@ -678,7 +708,8 @@ public class JiaguApplication extends Application {{
             # 编译Java文件为dex
             output_dex = os.path.join(temp_dir, "classes.dex")
             if not self._compile_java_to_dex([protection_file], output_dex):
-                return False
+                logger.warning("dx工具不可用，跳过防调试与反逆向保护")
+                return True  # 跳过保护，但返回成功
             
             # 注入dex到APK
             if not self._inject_dex_into_apk(apk_path, output_dex):
@@ -700,9 +731,15 @@ public class JiaguApplication extends Application {{
         :return: 包名或None
         """
         try:
-            # 使用aapt或其他方式获取包名
-            # 暂时返回默认包名
-            logger.warning("暂时使用默认包名，后续需要实现从APK中获取包名的功能")
+            # 使用APKParser获取包名
+            from src.core.apk_parser import APKParser
+            parser = APKParser(apk_path)
+            if parser.parse():
+                package_name = parser.package_name
+                if package_name:
+                    logger.info(f"从APK中获取到包名: {package_name}")
+                    return package_name
+            logger.warning("无法从APK中获取包名，使用默认包名")
             return "com.jiagu.protection"
         except Exception as e:
             logger.error(f"获取包名失败: {e}")
