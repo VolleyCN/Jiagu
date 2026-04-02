@@ -12,12 +12,12 @@ import subprocess
 from loguru import logger
 
 class APKParser:
-    """APK文件解析器"""
+    """APK/AAB文件解析器"""
     
     def __init__(self, apk_path):
         """
-        初始化APK解析器
-        :param apk_path: APK文件路径
+        初始化APK/AAB解析器
+        :param apk_path: APK或AAB文件路径
         """
         self.apk_path = apk_path
         self.temp_dir = None
@@ -28,26 +28,36 @@ class APKParser:
         self.version_code = None
         self.min_sdk_version = None
         self.target_sdk_version = None
+        self.is_aab = os.path.splitext(apk_path)[1].lower() == '.aab'
         
     def parse(self):
         """
-        解析APK文件
+        解析APK或AAB文件
         :return: 解析结果（True/False）
         """
         try:
-            logger.info(f"开始解析APK文件: {self.apk_path}")
+            if self.is_aab:
+                logger.info(f"开始解析AAB文件: {self.apk_path}")
+            else:
+                logger.info(f"开始解析APK文件: {self.apk_path}")
             
             # 验证文件存在性
             if not os.path.exists(self.apk_path):
-                logger.error(f"APK文件不存在: {self.apk_path}")
+                if self.is_aab:
+                    logger.error(f"AAB文件不存在: {self.apk_path}")
+                else:
+                    logger.error(f"APK文件不存在: {self.apk_path}")
                 return False
             
             # 检查是否为有效的ZIP文件
             if not zipfile.is_zipfile(self.apk_path):
-                logger.error(f"不是有效的ZIP/APK文件: {self.apk_path}")
+                if self.is_aab:
+                    logger.error(f"不是有效的ZIP/AAB文件: {self.apk_path}")
+                else:
+                    logger.error(f"不是有效的ZIP/APK文件: {self.apk_path}")
                 return False
             
-            # 解析APK基本信息
+            # 解析APK/AAB基本信息
             self._parse_apk_info()
             
             # 提取DEX文件
@@ -56,7 +66,10 @@ class APKParser:
             # 提取资源文件列表
             self._extract_resource_files()
             
-            logger.info(f"APK解析成功，包名: {self.package_name}, 版本: {self.version_name}")
+            if self.is_aab:
+                logger.info(f"AAB解析成功，包名: {self.package_name}, 版本: {self.version_name}")
+            else:
+                logger.info(f"APK解析成功，包名: {self.package_name}, 版本: {self.version_name}")
             return True
         except Exception as e:
             logger.error(f"APK解析失败: {e}")
@@ -93,7 +106,7 @@ class APKParser:
     
     def _parse_apk_info(self):
         """
-        解析APK基本信息
+        解析APK或AAB基本信息
         """
         # 尝试使用aapt2解析
         aapt2_path = self._find_aapt2()
@@ -132,29 +145,46 @@ class APKParser:
         # 回退使用zipfile解析AndroidManifest.xml
         try:
             with zipfile.ZipFile(self.apk_path, 'r') as zf:
-                if 'AndroidManifest.xml' in zf.namelist():
-                    # 这里简单处理，只提取文件名等基本信息
-                    logger.info("使用zipfile解析APK信息")
-                    # 可以使用xml.etree.ElementTree解析XML，但需要处理二进制XML格式
-                    # 这里暂时设置默认值
-                    self.package_name = os.path.basename(self.apk_path).replace('.apk', '')
-                    self.version_name = "1.0"
-                    self.version_code = "1"
+                if self.is_aab:
+                    # 对于AAB文件，AndroidManifest.xml位于base/manifest/目录下
+                    if 'base/manifest/AndroidManifest.xml' in zf.namelist():
+                        # 这里简单处理，只提取文件名等基本信息
+                        logger.info("使用zipfile解析AAB信息")
+                        # 可以使用xml.etree.ElementTree解析XML，但需要处理二进制XML格式
+                        # 这里暂时设置默认值
+                        self.package_name = os.path.basename(self.apk_path).replace('.aab', '')
+                        self.version_name = "1.0"
+                        self.version_code = "1"
+                else:
+                    # 对于APK文件，AndroidManifest.xml直接位于根目录下
+                    if 'AndroidManifest.xml' in zf.namelist():
+                        # 这里简单处理，只提取文件名等基本信息
+                        logger.info("使用zipfile解析APK信息")
+                        # 可以使用xml.etree.ElementTree解析XML，但需要处理二进制XML格式
+                        # 这里暂时设置默认值
+                        self.package_name = os.path.basename(self.apk_path).replace('.apk', '')
+                        self.version_name = "1.0"
+                        self.version_code = "1"
         except Exception as e:
-            logger.error(f"解析APK信息失败: {e}")
+            logger.error(f"解析APK/AAB信息失败: {e}")
             # 设置默认值
-            self.package_name = os.path.basename(self.apk_path).replace('.apk', '')
+            if self.is_aab:
+                self.package_name = os.path.basename(self.apk_path).replace('.aab', '')
+            else:
+                self.package_name = os.path.basename(self.apk_path).replace('.apk', '')
             self.version_name = "1.0"
             self.version_code = "1"
     
     def _extract_dex_files(self):
         """
-        提取APK中的DEX文件
+        提取APK或AAB中的DEX文件
         """
         try:
             with zipfile.ZipFile(self.apk_path, 'r') as zf:
                 # 获取所有DEX文件
                 for file_name in zf.namelist():
+                    # 对于AAB文件，DEX文件位于base/dex/目录下
+                    # 对于APK文件，DEX文件直接位于根目录下
                     if file_name.endswith('.dex'):
                         with zf.open(file_name) as dex_file:
                             dex_data = dex_file.read()
@@ -169,12 +199,17 @@ class APKParser:
     
     def _extract_resource_files(self):
         """
-        提取APK中的资源文件列表
+        提取APK或AAB中的资源文件列表
         """
         try:
             with zipfile.ZipFile(self.apk_path, 'r') as zf:
                 # 获取所有资源文件路径
-                self.resource_files = [f for f in zf.namelist() if f.startswith('res/') or f == 'AndroidManifest.xml']
+                # 对于AAB文件，资源文件位于base/res/和base/manifest/目录下
+                # 对于APK文件，资源文件位于res/目录下
+                if self.is_aab:
+                    self.resource_files = [f for f in zf.namelist() if f.startswith('base/res/') or f.startswith('base/manifest/')]
+                else:
+                    self.resource_files = [f for f in zf.namelist() if f.startswith('res/') or f == 'AndroidManifest.xml']
             logger.info(f"提取到 {len(self.resource_files)} 个资源文件")
         except Exception as e:
             logger.error(f"提取资源文件列表失败: {e}")
@@ -254,22 +289,22 @@ class APKParser:
             logger.info(f"清理临时目录: {self.temp_dir}")
 
 class BatchAPKParser:
-    """批量APK解析器"""
+    """批量APK/AAB解析器"""
     
     def __init__(self, apk_paths):
         """
         初始化批量解析器
-        :param apk_paths: APK文件路径列表
+        :param apk_paths: APK或AAB文件路径列表
         """
         self.apk_paths = apk_paths
         self.results = []
     
     def parse_all(self):
         """
-        批量解析所有APK文件
+        批量解析所有APK或AAB文件
         :return: 解析结果列表
         """
-        logger.info(f"开始批量解析 {len(self.apk_paths)} 个APK文件")
+        logger.info(f"开始批量解析 {len(self.apk_paths)} 个APK或AAB文件")
         
         for apk_path in self.apk_paths:
             parser = APKParser(apk_path)

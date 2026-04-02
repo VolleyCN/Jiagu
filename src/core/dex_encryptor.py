@@ -543,6 +543,8 @@ class DexEncryptor:
                     results['loader_code'] = self.generate_loader_dex(dex_info['name'])
                 
                 encrypted_dex_path = os.path.join(output_dir, "encrypted_" + dex_info['name'])
+                # 创建目录结构
+                os.makedirs(os.path.dirname(encrypted_dex_path), exist_ok=True)
                 with open(encrypted_dex_path, 'wb') as f:
                     f.write(encrypted_data)
                 
@@ -571,20 +573,29 @@ class DexProtection:
     def _modify_manifest(self, apk_path):
         """
         修改AndroidManifest.xml，将Application替换为加载器
-        :param apk_path: APK路径
+        :param apk_path: APK或AAB路径
         """
         import xml.etree.ElementTree as ET
         import zipfile
         import tempfile
         import os
         
+        # 检查文件扩展名，判断是APK还是AAB
+        file_ext = os.path.splitext(apk_path)[1].lower()
+        is_aab = file_ext == '.aab'
+        
         temp_dir = tempfile.mkdtemp(prefix="jiagu_manifest_")
         try:
-            # 从APK中提取AndroidManifest.xml
+            # 从APK或AAB中提取AndroidManifest.xml
             with zipfile.ZipFile(apk_path, 'r') as zipf:
-                zipf.extract("AndroidManifest.xml", temp_dir)
-            
-            manifest_path = os.path.join(temp_dir, "AndroidManifest.xml")
+                if is_aab:
+                    # 对于AAB文件，AndroidManifest.xml位于base/manifest/目录下
+                    zipf.extract("base/manifest/AndroidManifest.xml", temp_dir)
+                    manifest_path = os.path.join(temp_dir, "base", "manifest", "AndroidManifest.xml")
+                else:
+                    # 对于APK文件，AndroidManifest.xml直接位于根目录下
+                    zipf.extract("AndroidManifest.xml", temp_dir)
+                    manifest_path = os.path.join(temp_dir, "AndroidManifest.xml")
             
             # 检查文件是否存在且非空
             if not os.path.exists(manifest_path):
@@ -615,9 +626,14 @@ class DexProtection:
                     # 写回XML
                     tree.write(manifest_path, encoding="utf-8", xml_declaration=True)
                     
-                    # 将修改后的manifest写回APK
+                    # 将修改后的manifest写回APK或AAB
                     with zipfile.ZipFile(apk_path, 'a') as zipf:
-                        zipf.write(manifest_path, "AndroidManifest.xml")
+                        if is_aab:
+                            # 对于AAB文件，写回base/manifest/目录下
+                            zipf.write(manifest_path, "base/manifest/AndroidManifest.xml")
+                        else:
+                            # 对于APK文件，写回根目录下
+                            zipf.write(manifest_path, "AndroidManifest.xml")
                     
                     logger.info("AndroidManifest.xml修改完成")
                 else:
@@ -641,11 +657,15 @@ class DexProtection:
     def _modify_manifest_with_aapt2(self, apk_path):
         """
         使用aapt2工具修改AndroidManifest.xml
-        :param apk_path: APK路径
+        :param apk_path: APK或AAB路径
         """
         import tempfile
         import os
         import subprocess
+        
+        # 检查文件扩展名，判断是APK还是AAB
+        file_ext = os.path.splitext(apk_path)[1].lower()
+        is_aab = file_ext == '.aab'
         
         temp_dir = tempfile.mkdtemp(prefix="jiagu_aapt2_")
         try:
@@ -656,7 +676,12 @@ class DexProtection:
                 return
             
             # 使用aapt2 dump获取manifest的文本表示
-            dump_cmd = [aapt2_path, "dump", "xmltree", "--file", "AndroidManifest.xml", apk_path]
+            if is_aab:
+                # 对于AAB文件，AndroidManifest.xml位于base/manifest/目录下
+                dump_cmd = [aapt2_path, "dump", "xmltree", "--file", "base/manifest/AndroidManifest.xml", apk_path]
+            else:
+                # 对于APK文件，AndroidManifest.xml直接位于根目录下
+                dump_cmd = [aapt2_path, "dump", "xmltree", "--file", "AndroidManifest.xml", apk_path]
             result = subprocess.run(dump_cmd, capture_output=True, text=True)
             
             if result.returncode != 0:
@@ -829,13 +854,18 @@ class DexProtection:
     
     def _sign_apk(self, apk_path):
         """
-        重新签名APK
-        :param apk_path: APK路径
+        重新签名APK或AAB
+        :param apk_path: APK或AAB路径
         """
         import tempfile
         import os
+        import subprocess
         from src.core.config_manager import ConfigManager
         from src.core.signature_manager import SignatureManager
+        
+        # 检查文件扩展名，判断是APK还是AAB
+        file_ext = os.path.splitext(apk_path)[1].lower()
+        is_aab = file_ext == '.aab'
         
         temp_dir = tempfile.mkdtemp(prefix="jiagu_sign_")
         try:
@@ -849,24 +879,56 @@ class DexProtection:
             if signature_config and all(key in signature_config for key in [keystore_key, 'keystore_pass', 'key_alias', 'key_pass']):
                 logger.info("使用配置的签名信息进行签名")
                 
-                # 使用SignatureManager进行签名
-                signature_manager = SignatureManager()
-                output_path = apk_path  # 直接在原文件上签名
-                
-                # 调用签名方法
-                sign_result = signature_manager.sign_apk(
-                    apk_path=apk_path,
-                    output_path=output_path,
-                    keystore_path=signature_config[keystore_key],
-                    keystore_password=signature_config['keystore_pass'],
-                    key_alias=signature_config['key_alias'],
-                    key_password=signature_config['key_pass']
-                )
-                
-                if sign_result['success']:
-                    logger.info("APK签名成功")
+                if is_aab:
+                    # 对于AAB文件，使用jarsigner进行签名
+                    logger.info("使用jarsigner对AAB进行签名")
+                    
+                    # 构建jarsigner命令
+                    jarsigner_cmd = [
+                        "jarsigner", "-verbose",
+                        "-sigalg", "SHA256withRSA",
+                        "-digestalg", "SHA-256",
+                        "-keystore", signature_config[keystore_key],
+                        "-storepass", signature_config['keystore_pass'],
+                        "-keypass", signature_config['key_pass'],
+                        apk_path,
+                        signature_config['key_alias']
+                    ]
+                    
+                    # 执行签名命令
+                    result = subprocess.run(jarsigner_cmd, capture_output=True, text=True, check=True)
+                    logger.info("AAB签名成功")
+                    
+                    # 验证签名
+                    verify_cmd = ["jarsigner", "-verify", apk_path]
+                    try:
+                        result = subprocess.run(verify_cmd, capture_output=True, text=True, check=True)
+                        logger.info("AAB签名验证成功")
+                    except subprocess.CalledProcessError as e:
+                        logger.warning(f"AAB签名验证失败: {e}")
+                        logger.warning("继续执行，因为签名验证失败可能是由于签名算法或其他原因导致的")
+                        logger.warning(f"验证输出: {e.stdout}")
+                        logger.warning(f"验证错误: {e.stderr}")
                 else:
-                    logger.error(f"APK签名失败: {sign_result.get('error', '未知错误')}")
+                    # 对于APK文件，使用SignatureManager进行签名
+                    # 使用SignatureManager进行签名
+                    signature_manager = SignatureManager()
+                    output_path = apk_path  # 直接在原文件上签名
+                    
+                    # 调用签名方法
+                    sign_result = signature_manager.sign_apk(
+                        apk_path=apk_path,
+                        output_path=output_path,
+                        keystore_path=signature_config[keystore_key],
+                        keystore_password=signature_config['keystore_pass'],
+                        key_alias=signature_config['key_alias'],
+                        key_password=signature_config['key_pass']
+                    )
+                    
+                    if sign_result['success']:
+                        logger.info("APK签名成功")
+                    else:
+                        logger.error(f"APK签名失败: {sign_result.get('error', '未知错误')}")
             else:
                 logger.warning("未找到签名配置，使用临时签名密钥")
                 # 生成临时签名密钥
@@ -891,7 +953,7 @@ class DexProtection:
                 result = subprocess.run(keytool_cmd, capture_output=True, text=True, check=True)
                 logger.info("生成临时签名密钥成功")
                 
-                # 签名APK
+                # 签名APK或AAB
                 jarsigner_cmd = [
                     "jarsigner", "-verbose",
                     "-sigalg", "SHA1withRSA",
@@ -904,21 +966,33 @@ class DexProtection:
                 ]
                 
                 result = subprocess.run(jarsigner_cmd, capture_output=True, text=True, check=True)
-                logger.info("APK签名成功")
+                if is_aab:
+                    logger.info("AAB签名成功")
+                else:
+                    logger.info("APK签名成功")
                 
                 # 验证签名
                 verify_cmd = ["jarsigner", "-verify", apk_path]
                 try:
                     result = subprocess.run(verify_cmd, capture_output=True, text=True, check=True)
-                    logger.info("APK签名验证成功")
+                    if is_aab:
+                        logger.info("AAB签名验证成功")
+                    else:
+                        logger.info("APK签名验证成功")
                 except subprocess.CalledProcessError as e:
-                    logger.warning(f"APK签名验证失败: {e}")
+                    if is_aab:
+                        logger.warning(f"AAB签名验证失败: {e}")
+                    else:
+                        logger.warning(f"APK签名验证失败: {e}")
                     logger.warning("继续执行，因为签名验证失败可能是由于签名算法或其他原因导致的")
                     logger.warning(f"验证输出: {e.stdout}")
                     logger.warning(f"验证错误: {e.stderr}")
             
         except Exception as e:
-            logger.error(f"APK签名失败: {e}")
+            if is_aab:
+                logger.error(f"AAB签名失败: {e}")
+            else:
+                logger.error(f"APK签名失败: {e}")
             import traceback
             traceback.print_exc()
         finally:
@@ -1024,22 +1098,32 @@ class DexProtection:
     
     def protect_apk(self, apk_path, output_path):
         """
-        保护APK中的DEX文件
-        :param apk_path: 原始APK路径
-        :param output_path: 输出APK路径
+        保护APK或AAB中的DEX文件
+        :param apk_path: 原始APK或AAB路径
+        :param output_path: 输出APK或AAB路径
         :return: 保护结果
         """
         from src.core.apk_parser import APKParser
         import zipfile
         import os
         
+        # 检查文件扩展名，判断是APK还是AAB
+        file_ext = os.path.splitext(apk_path)[1].lower()
+        is_aab = file_ext == '.aab'
+        
         try:
-            logger.info("开始保护APK: " + apk_path)
+            if is_aab:
+                logger.info("开始保护AAB: " + apk_path)
+            else:
+                logger.info("开始保护APK: " + apk_path)
             
-            # 1. 解析APK
+            # 1. 解析APK或AAB
             parser = APKParser(apk_path)
             if not parser.parse():
-                raise Exception("APK解析失败")
+                if is_aab:
+                    raise Exception("AAB解析失败")
+                else:
+                    raise Exception("APK解析失败")
             
             temp_dir = tempfile.mkdtemp(prefix="jiagu_")
             
@@ -1054,7 +1138,13 @@ class DexProtection:
                 with zipfile.ZipFile(output_path, 'a') as zipf:
                     # 5. 将加密后的DEX文件添加到assets目录
                     for encrypted_dex in encrypt_results['encrypted_dex_files']:
-                        encrypted_dex_name = "encrypted_" + encrypted_dex['original_name']
+                        # 对于AAB文件，加密后的DEX文件应该添加到assets/目录下，而不是保持原来的base/dex/路径
+                        if is_aab:
+                            # 只使用文件名，不包含路径
+                            original_name = os.path.basename(encrypted_dex['original_name'])
+                            encrypted_dex_name = "encrypted_" + original_name
+                        else:
+                            encrypted_dex_name = "encrypted_" + encrypted_dex['original_name']
                         zipf.write(encrypted_dex['encrypted_path'], "assets/" + encrypted_dex_name)
                         logger.info("已添加加密DEX到assets: " + encrypted_dex_name)
                     
@@ -1118,15 +1208,23 @@ public class JiaguApplication extends Application {
                 # 7. 修改AndroidManifest.xml，将Application替换为加载器
                 self._modify_manifest(output_path)
                 
-                # 8. 重新签名APK
+                # 8. 重新签名APK或AAB
                 self._sign_apk(output_path)
                 
-                logger.info("APK保护完成: " + output_path)
-                return {
-                    'success': True,
-                    'message': "APK保护成功，加密了 " + str(encrypt_results['original_dex_count']) + " 个DEX文件",
-                    'details': encrypt_results
-                }
+                if is_aab:
+                    logger.info("AAB保护完成: " + output_path)
+                    return {
+                        'success': True,
+                        'message': "AAB保护成功，加密了 " + str(encrypt_results['original_dex_count']) + " 个DEX文件",
+                        'details': encrypt_results
+                    }
+                else:
+                    logger.info("APK保护完成: " + output_path)
+                    return {
+                        'success': True,
+                        'message': "APK保护成功，加密了 " + str(encrypt_results['original_dex_count']) + " 个DEX文件",
+                        'details': encrypt_results
+                    }
             finally:
                 shutil.rmtree(temp_dir)
                 parser.close()

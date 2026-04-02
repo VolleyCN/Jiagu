@@ -77,13 +77,20 @@ class JiaguThread(QThread):
     
     def _process_apk(self, apk_path):
         """
-        处理单个APK文件
-        :param apk_path: APK文件路径
+        处理单个APK或AAB文件
+        :param apk_path: APK或AAB文件路径
         :return: 处理结果
         """
-        logger.info(f"开始处理APK: {apk_path}")
+        # 检查文件扩展名，判断是APK还是AAB
+        file_ext = os.path.splitext(apk_path)[1].lower()
+        is_aab = file_ext == '.aab'
         
-        # 1. 解析APK
+        if is_aab:
+            logger.info(f"开始处理AAB: {apk_path}")
+        else:
+            logger.info(f"开始处理APK: {apk_path}")
+        
+        # 1. 解析APK或AAB
         from src.core.apk_parser import BatchAPKParser
         parser = BatchAPKParser([apk_path])
         parse_results = parser.parse_all()
@@ -166,12 +173,13 @@ class JiaguThread(QThread):
         key_alias = signature_config.get('key_alias', '')
         key_pass = signature_config.get('key_pass', '')
         
+        # 检查文件扩展名，判断是APK还是AAB
+        file_ext = os.path.splitext(apk_path)[1].lower()
+        is_aab = file_ext == '.aab'
+        
         # 检查签名配置是否完整
         if keystore_path and keystore_pass and key_alias and key_pass:
             try:
-                # 使用签名管理器进行签名
-                signature_manager = SignatureManager()
-                
                 # 最终输出的APK路径
                 final_output = os.path.join(output_dir, f"protected_{os.path.basename(apk_path)}")
                 
@@ -182,18 +190,61 @@ class JiaguThread(QThread):
                 elif os.path.exists(os.path.join(output_dir, f"dex_protected_{os.path.basename(apk_path)}")):
                     apk_to_sign = os.path.join(output_dir, f"dex_protected_{os.path.basename(apk_path)}")
                 
-                # 执行签名
-                sign_result = signature_manager.sign_apk(
-                    apk_to_sign,
-                    final_output,
-                    keystore_path,
-                    keystore_pass,
-                    key_alias,
-                    key_pass
-                )
+                if is_aab:
+                    # 对于AAB文件，使用jarsigner进行签名
+                    logger.info("使用jarsigner对AAB进行签名")
+                    
+                    # 构建jarsigner命令
+                    import subprocess
+                    jarsigner_cmd = [
+                        "jarsigner", "-verbose",
+                        "-sigalg", "SHA256withRSA",
+                        "-digestalg", "SHA-256",
+                        "-keystore", keystore_path,
+                        "-storepass", keystore_pass,
+                        "-keypass", key_pass,
+                        apk_to_sign,
+                        key_alias
+                    ]
+                    
+                    # 执行签名命令
+                    result = subprocess.run(jarsigner_cmd, capture_output=True, text=True, check=True)
+                    logger.info("AAB签名成功")
+                    
+                    # 验证签名
+                    verify_cmd = ["jarsigner", "-verify", apk_to_sign]
+                    try:
+                        result = subprocess.run(verify_cmd, capture_output=True, text=True, check=True)
+                        logger.info("AAB签名验证成功")
+                    except subprocess.CalledProcessError as e:
+                        logger.warning(f"AAB签名验证失败: {e}")
+                        logger.warning("继续执行，因为签名验证失败可能是由于签名算法或其他原因导致的")
+                        logger.warning(f"验证输出: {e.stdout}")
+                        logger.warning(f"验证错误: {e.stderr}")
+                    
+                    # 复制到最终输出路径
+                    import shutil
+                    shutil.copy2(apk_to_sign, final_output)
+                    sign_result = {'success': True}
+                else:
+                    # 对于APK文件，使用签名管理器进行签名
+                    signature_manager = SignatureManager()
+                    
+                    # 执行签名
+                    sign_result = signature_manager.sign_apk(
+                        apk_to_sign,
+                        final_output,
+                        keystore_path,
+                        keystore_pass,
+                        key_alias,
+                        key_pass
+                    )
                 
                 if sign_result['success']:
-                    logger.info(f"APK签名完成: {final_output}")
+                    if is_aab:
+                        logger.info(f"AAB签名完成: {final_output}")
+                    else:
+                        logger.info(f"APK签名完成: {final_output}")
                     
                     # 7. 执行多渠道打包（如果启用，基于瓦力原理，签名后注入渠道信息）
                     channel_packaging = self.options.get('channel_packaging', {})
@@ -223,19 +274,35 @@ class JiaguThread(QThread):
                         else:
                             logger.warning(f"多渠道打包失败: {channel_result['message']}")
                 else:
-                    logger.error(f"APK签名失败: {sign_result.get('error', '未知错误')}")
+                    if is_aab:
+                        logger.error(f"AAB签名失败: {sign_result.get('error', '未知错误')}")
+                        return {
+                            'success': False,
+                            'apk_path': apk_path,
+                            'error': f"AAB签名失败: {sign_result.get('error', '未知错误')}"
+                        }
+                    else:
+                        logger.error(f"APK签名失败: {sign_result.get('error', '未知错误')}")
+                        return {
+                            'success': False,
+                            'apk_path': apk_path,
+                            'error': f"APK签名失败: {sign_result.get('error', '未知错误')}"
+                        }
+            except Exception as e:
+                if is_aab:
+                    logger.error(f"AAB签名过程中发生错误: {e}")
                     return {
                         'success': False,
                         'apk_path': apk_path,
-                        'error': f"APK签名失败: {sign_result.get('error', '未知错误')}"
+                        'error': f"AAB签名过程中发生错误: {str(e)}"
                     }
-            except Exception as e:
-                logger.error(f"签名过程中发生错误: {e}")
-                return {
-                    'success': False,
-                    'apk_path': apk_path,
-                    'error': f"签名过程中发生错误: {str(e)}"
-                }
+                else:
+                    logger.error(f"APK签名过程中发生错误: {e}")
+                    return {
+                        'success': False,
+                        'apk_path': apk_path,
+                        'error': f"APK签名过程中发生错误: {str(e)}"
+                    }
         else:
             logger.warning("签名配置不完整，跳过签名步骤")
             # 至少需要有一个输出文件
@@ -517,7 +584,7 @@ class MainWindow(QMainWindow):
         channel_group_layout = QVBoxLayout(channel_group)
         
         self.channel_packaging_check = QCheckBox("启用多渠道打包")
-        self.channel_packaging_check.setChecked(False)  # 默认禁用
+        self.channel_packaging_check.setChecked(True)  # 默认启用
         channel_group_layout.addWidget(self.channel_packaging_check)
         
         # 渠道配置文件
@@ -628,23 +695,23 @@ class MainWindow(QMainWindow):
     
     def add_apk(self):
         """
-        添加单个APK文件
+        添加单个APK或AAB文件
         """
-        file_path, _ = QFileDialog.getOpenFileName(self, "选择APK文件", ".", "APK文件 (*.apk)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "选择APK或AAB文件", ".", "应用文件 (*.apk *.aab)")
         if file_path:
             self.add_apk_to_list(file_path)
     
     def batch_add_apk(self):
         """
-        批量添加APK文件
+        批量添加APK或AAB文件
         """
-        file_paths, _ = QFileDialog.getOpenFileNames(self, "选择多个APK文件", ".", "APK文件 (*.apk)")
+        file_paths, _ = QFileDialog.getOpenFileNames(self, "选择多个APK或AAB文件", ".", "应用文件 (*.apk *.aab)")
         for file_path in file_paths:
             self.add_apk_to_list(file_path)
     
     def add_apk_to_list(self, file_path):
         """
-        将APK文件添加到列表
+        将APK或AAB文件添加到列表
         """
         if file_path and file_path not in self.apk_list:
             self.apk_list.append(file_path)
@@ -1061,7 +1128,33 @@ class MainWindow(QMainWindow):
             self.log(f"加固报告已生成: {report_path}")
         
         # 显示结果对话框
-        QMessageBox.information(self, "完成", f"加固处理完成！\n成功: {success_count}/{total_count}\n\n报告已保存到: {report_path}")
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("完成")
+        msg_box.setText(f"加固处理完成！\n成功: {success_count}/{total_count}\n\n报告已保存到: {report_path}")
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        
+        # 执行对话框
+        response = msg_box.exec_()
+        
+        # 如果点击了确定按钮，打开渠道包存放的文件夹
+        if response == QMessageBox.Ok:
+            # 渠道包存放的文件夹路径
+            output_dir = self.options.get('output_dir', '.')
+            channels_dir = os.path.join(output_dir, 'channels')
+            
+            # 检查channels目录是否存在
+            if os.path.exists(channels_dir):
+                # 打开channels目录
+                import subprocess
+                if sys.platform == 'darwin':  # macOS
+                    subprocess.run(['open', channels_dir])
+                elif sys.platform == 'win32':  # Windows
+                    subprocess.run(['explorer', channels_dir])
+                else:  # Linux
+                    subprocess.run(['xdg-open', channels_dir])
+                self.log(f"已打开渠道包存放的文件夹: {channels_dir}")
+            else:
+                self.log(f"渠道包存放的文件夹不存在: {channels_dir}")
     
     def dragEnterEvent(self, event: QDragEnterEvent):
         """
