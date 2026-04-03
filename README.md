@@ -142,11 +142,11 @@ output:
 channels:
   - name: google_play
     metadata:
-      CHANNEL_ID: zhima-android-google_play
+      CHANNEL_ID: android-google_play
       MARKET_NAME: Google Play
   - name: huawei
     metadata:
-      CHANNEL_ID: zhima-android-huawei
+      CHANNEL_ID: android-huawei
       MARKET_NAME: Huawei AppGallery
   # 更多渠道...
 ```

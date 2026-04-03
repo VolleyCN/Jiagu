@@ -12,6 +12,9 @@ log/
 *.apk
 *.apk.idsig
 
+# AAB文件
+*.aab
+
 # 生成的渠道包
 channels/
 
